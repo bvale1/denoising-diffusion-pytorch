@@ -276,22 +276,24 @@ class Attention(Module):
 class Unet(Module):
     def __init__(
         self,
-        dim,
-        init_dim = None,
-        out_dim = None,
-        dim_mults = (1, 2, 4, 8),
-        channels = 3,
-        self_condition = False,
-        learned_variance = False,
-        learned_sinusoidal_cond = False,
-        random_fourier_features = False,
-        learned_sinusoidal_dim = 16,
-        sinusoidal_pos_emb_theta = 10000,
-        dropout = 0.,
-        attn_dim_head = 32,
-        attn_heads = 4,
-        full_attn = None,    # defaults to full attention only for inner most layer
-        flash_attn = False
+        dim : int,
+        init_dim : int = None,
+        out_dim : int = None,
+        dim_mults : tuple = (1, 2, 4, 8),
+        channels : int = 3,
+        self_condition : bool = False,
+        image_condition : bool = False, # condition on image
+        learned_variance : bool = False,
+        learned_sinusoidal_cond : bool = False,
+        random_fourier_features : bool = False,
+        learned_sinusoidal_dim : int = 16,
+        sinusoidal_pos_emb_theta : int = 10000,
+        dropout : float = 0.,
+        attn_dim_head : int = 32,
+        attn_heads : int = 4,
+        full_attn : bool = None,    # defaults to full attention only for inner most layer
+        flash_attn : bool = False,
+        downsample_channels_factor : int = None, # downsample channels per layer by this factor (for testing code)
     ):
         super().__init__()
 
@@ -299,12 +301,14 @@ class Unet(Module):
 
         self.channels = channels
         self.self_condition = self_condition
-        input_channels = channels * (2 if self_condition else 1)
+        self.image_condition = image_condition
+        input_channels = channels * (2 if self_condition != image_condition else 1) # xor
+        input_channels = channels * (3 if self_condition and image_condition else 1)
 
         init_dim = default(init_dim, dim)
         self.init_conv = nn.Conv2d(input_channels, init_dim, 7, padding = 3)
-
-        dims = [init_dim, *map(lambda m: dim * m, dim_mults)]
+        downsample_channels_factor = default(downsample_channels_factor, 1)
+        dims = [init_dim, *map(lambda m: dim * m // downsample_channels_factor, dim_mults)]
         in_out = list(zip(dims[:-1], dims[1:]))
 
         # time embeddings
@@ -389,12 +393,25 @@ class Unet(Module):
     def downsample_factor(self):
         return 2 ** (len(self.downs) - 1)
 
-    def forward(self, x, time, x_self_cond = None):
+    def forward(self, x, time, x_self_cond = None, image_cond = None):
         assert all([divisible_by(d, self.downsample_factor) for d in x.shape[-2:]]), f'your input dimensions {x.shape[-2:]} need to be divisible by {self.downsample_factor}, given the unet'
 
         if self.self_condition:
-            x_self_cond = default(x_self_cond, lambda: torch.zeros_like(x))
+            x_self_cond = default(
+                x_self_cond, lambda: torch.zeros(
+                        (x.shape[0], self.channels, x.shape[2], x.shape[3]),
+                        device = x.device, dtype = x.dtype
+                    )
+                )
             x = torch.cat((x_self_cond, x), dim = 1)
+        if self.image_condition:
+            image_cond = default(
+                image_cond, lambda: torch.zeros(
+                        (x.shape[0], self.channels, x.shape[2], x.shape[3]),
+                        device = x.device, dtype = x.dtype
+                    )
+                )
+            x = torch.cat((image_cond, x), dim = 1)
 
         x = self.init_conv(x)
         r = x.clone()
@@ -501,6 +518,7 @@ class GaussianDiffusion(Module):
 
         self.channels = self.model.channels
         self.self_condition = self.model.self_condition
+        self.image_condition = self.model.image_condition
 
         if isinstance(image_size, int):
             image_size = (image_size, image_size)
@@ -635,8 +653,9 @@ class GaussianDiffusion(Module):
         posterior_log_variance_clipped = extract(self.posterior_log_variance_clipped, t, x_t.shape)
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
-    def model_predictions(self, x, t, x_self_cond = None, clip_x_start = False, rederive_pred_noise = False):
-        model_output = self.model(x, t, x_self_cond)
+    def model_predictions(self, x, t, x_self_cond = None, x_cond = None,
+                          clip_x_start = False, rederive_pred_noise = False):
+        model_output = self.model(x, t, x_self_cond, x_cond)
         maybe_clip = partial(torch.clamp, min = -1., max = 1.) if clip_x_start else identity
 
         if self.objective == 'pred_noise':
@@ -660,27 +679,31 @@ class GaussianDiffusion(Module):
 
         return ModelPrediction(pred_noise, x_start)
 
-    def p_mean_variance(self, x, t, x_self_cond = None, clip_denoised = True):
-        preds = self.model_predictions(x, t, x_self_cond)
+    def p_mean_variance(self, x, t, x_self_cond = None, x_cond = None, clip_denoised = True):
+        preds = self.model_predictions(x, t, x_self_cond, x_cond)
         x_start = preds.pred_x_start
 
         if clip_denoised:
             x_start.clamp_(-1., 1.)
 
-        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start = x_start, x_t = x, t = t)
+        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(
+            x_start = x_start, x_t = x, t = t
+        )
         return model_mean, posterior_variance, posterior_log_variance, x_start
 
     @torch.inference_mode()
-    def p_sample(self, x, t: int, x_self_cond = None):
+    def p_sample(self, x, t: int, x_self_cond = None, x_cond = None):
         b, *_, device = *x.shape, self.device
         batched_times = torch.full((b,), t, device = device, dtype = torch.long)
-        model_mean, _, model_log_variance, x_start = self.p_mean_variance(x = x, t = batched_times, x_self_cond = x_self_cond, clip_denoised = True)
+        model_mean, _, model_log_variance, x_start = self.p_mean_variance(
+            x = x, t = batched_times, x_self_cond = x_self_cond, x_cond = x_cond, clip_denoised = True
+        )
         noise = torch.randn_like(x) if t > 0 else 0. # no noise if t == 0
         pred_img = model_mean + (0.5 * model_log_variance).exp() * noise
         return pred_img, x_start
 
     @torch.inference_mode()
-    def p_sample_loop(self, shape, return_all_timesteps = False):
+    def p_sample_loop(self, shape, x_cond = None, return_all_timesteps = False):
         batch, device = shape[0], self.device
 
         img = torch.randn(shape, device = device)
@@ -690,7 +713,7 @@ class GaussianDiffusion(Module):
 
         for t in tqdm(reversed(range(0, self.num_timesteps)), desc = 'sampling loop time step', total = self.num_timesteps):
             self_cond = x_start if self.self_condition else None
-            img, x_start = self.p_sample(img, t, self_cond)
+            img, x_start = self.p_sample(img, t, self_cond, x_cond)
             imgs.append(img)
 
         ret = img if not return_all_timesteps else torch.stack(imgs, dim = 1)
@@ -741,10 +764,14 @@ class GaussianDiffusion(Module):
         return ret
 
     @torch.inference_mode()
-    def sample(self, batch_size = 16, return_all_timesteps = False):
+    def sample(self, batch_size = 16, x_cond = None, return_all_timesteps = False):
         (h, w), channels = self.image_size, self.channels
         sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
-        return sample_fn((batch_size, channels, h, w), return_all_timesteps = return_all_timesteps)
+        return sample_fn(
+            (batch_size, channels, h, w),
+            x_cond=x_cond,
+            return_all_timesteps = return_all_timesteps
+        )
 
     @torch.inference_mode()
     def interpolate(self, x1, x2, t = None, lam = 0.5):
@@ -785,9 +812,9 @@ class GaussianDiffusion(Module):
             extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
         )
 
-    def p_losses(self, x_start, t, noise = None, offset_noise_strength = None):
+    def p_losses(self, x_start, t, noise = None, offset_noise_strength = None,
+                 x_cond = None):
         b, c, h, w = x_start.shape
-
         noise = default(noise, lambda: torch.randn_like(x_start))
 
         # offset noise - https://www.crosslabs.org/blog/diffusion-with-offset-noise
@@ -814,7 +841,7 @@ class GaussianDiffusion(Module):
 
         # predict and take gradient step
 
-        model_out = self.model(x, t, x_self_cond)
+        model_out = self.model(x, t, x_self_cond, x_cond)
 
         if self.objective == 'pred_noise':
             target = noise
