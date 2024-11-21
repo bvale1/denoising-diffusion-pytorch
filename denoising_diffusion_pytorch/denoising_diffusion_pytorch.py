@@ -704,17 +704,18 @@ class GaussianDiffusion(Module):
 
     @torch.inference_mode()
     def p_sample_loop(self, shape, x_cond = None, return_all_timesteps = False):
-        batch, device = shape[0], self.device
+        device = self.device
 
         img = torch.randn(shape, device = device)
-        imgs = [img]
+        imgs = [img] if return_all_timesteps else None
 
         x_start = None
 
-        for t in tqdm(reversed(range(0, self.num_timesteps)), desc = 'sampling loop time step', total = self.num_timesteps):
+        for t in reversed(range(self.num_timesteps)):
             self_cond = x_start if self.self_condition else None
             img, x_start = self.p_sample(img, t, self_cond, x_cond)
-            imgs.append(img)
+            if return_all_timesteps:
+                imgs.append(img)
 
         ret = img if not return_all_timesteps else torch.stack(imgs, dim = 1)
 
