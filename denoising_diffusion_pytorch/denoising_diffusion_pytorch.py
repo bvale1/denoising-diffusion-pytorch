@@ -393,9 +393,9 @@ class Unet(Module):
     def downsample_factor(self):
         return 2 ** (len(self.downs) - 1)
 
-    def forward(self, x, time, x_self_cond = None, image_cond = None):
+    def forward(self, x, time, x_self_cond = None, x_cond = None):
         assert all([divisible_by(d, self.downsample_factor) for d in x.shape[-2:]]), f'your input dimensions {x.shape[-2:]} need to be divisible by {self.downsample_factor}, given the unet'
-
+            
         if self.self_condition:
             x_self_cond = default(
                 x_self_cond, lambda: torch.zeros(
@@ -405,13 +405,13 @@ class Unet(Module):
                 )
             x = torch.cat((x_self_cond, x), dim = 1)
         if self.image_condition:
-            image_cond = default(
-                image_cond, lambda: torch.zeros(
+            x_cond = default(
+                x_cond, lambda: torch.zeros(
                         (x.shape[0], self.channels, x.shape[2], x.shape[3]),
                         device = x.device, dtype = x.dtype
                     )
                 )
-            x = torch.cat((image_cond, x), dim = 1)
+            x = torch.cat((x_cond, x), dim = 1)
 
         x = self.init_conv(x)
         r = x.clone()
@@ -655,7 +655,7 @@ class GaussianDiffusion(Module):
 
     def model_predictions(self, x, t, x_self_cond = None, x_cond = None,
                           clip_x_start = False, rederive_pred_noise = False):
-        model_output = self.model(x, t, x_self_cond, x_cond)
+        model_output = self.model(x, t, x_self_cond=x_self_cond, x_cond=x_cond)
         maybe_clip = partial(torch.clamp, min = -1., max = 1.) if clip_x_start else identity
 
         if self.objective == 'pred_noise':
@@ -680,7 +680,7 @@ class GaussianDiffusion(Module):
         return ModelPrediction(pred_noise, x_start)
 
     def p_mean_variance(self, x, t, x_self_cond = None, x_cond = None, clip_denoised = True):
-        preds = self.model_predictions(x, t, x_self_cond, x_cond)
+        preds = self.model_predictions(x, t, x_self_cond=x_self_cond, x_cond=x_cond)
         x_start = preds.pred_x_start
 
         if clip_denoised:
@@ -723,7 +723,7 @@ class GaussianDiffusion(Module):
         return ret
 
     @torch.inference_mode()
-    def ddim_sample(self, shape, return_all_timesteps = False):
+    def ddim_sample(self, shape, x_cond=None, return_all_timesteps = False):
         batch, device, total_timesteps, sampling_timesteps, eta, objective = shape[0], self.device, self.num_timesteps, self.sampling_timesteps, self.ddim_sampling_eta, self.objective
 
         times = torch.linspace(-1, total_timesteps - 1, steps = sampling_timesteps + 1)   # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
@@ -731,18 +731,22 @@ class GaussianDiffusion(Module):
         time_pairs = list(zip(times[:-1], times[1:])) # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
 
         img = torch.randn(shape, device = device)
-        imgs = [img]
+        imgs = [img] if return_all_timesteps else None
 
         x_start = None
 
-        for time, time_next in tqdm(time_pairs, desc = 'sampling loop time step'):
+        for time, time_next in time_pairs:
+            print(time, time_next)
             time_cond = torch.full((batch,), time, device = device, dtype = torch.long)
             self_cond = x_start if self.self_condition else None
-            pred_noise, x_start, *_ = self.model_predictions(img, time_cond, self_cond, clip_x_start = True, rederive_pred_noise = True)
+            pred_noise, x_start, *_ = self.model_predictions(
+                img, time_cond, self_cond, x_cond, clip_x_start = True, rederive_pred_noise = True
+            )
 
             if time_next < 0:
                 img = x_start
-                imgs.append(img)
+                if return_all_timesteps:
+                    imgs.append(img)
                 continue
 
             alpha = self.alphas_cumprod[time]
@@ -757,7 +761,8 @@ class GaussianDiffusion(Module):
                   c * pred_noise + \
                   sigma * noise
 
-            imgs.append(img)
+            if return_all_timesteps:
+                imgs.append(img)
 
         ret = img if not return_all_timesteps else torch.stack(imgs, dim = 1)
 
