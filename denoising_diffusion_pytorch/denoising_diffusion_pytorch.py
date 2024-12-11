@@ -736,7 +736,6 @@ class GaussianDiffusion(Module):
         x_start = None
 
         for time, time_next in time_pairs:
-            print(time, time_next)
             time_cond = torch.full((batch,), time, device = device, dtype = torch.long)
             self_cond = x_start if self.self_condition else None
             pred_noise, x_start, *_ = self.model_predictions(
