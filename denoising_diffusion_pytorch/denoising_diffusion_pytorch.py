@@ -698,7 +698,10 @@ class GaussianDiffusion(Module):
         model_mean, _, model_log_variance, x_start = self.p_mean_variance(
             x = x, t = batched_times, x_self_cond = x_self_cond, x_cond = x_cond, clip_denoised = True
         )
-        noise = torch.randn_like(x) if t > 0 else 0. # no noise if t == 0
+        # for inverse problems noise should not be added during sampling
+        #noise = torch.randn_like(x) if t > 0 else 0. # no noise if t == 0
+        noise = 0.
+        
         pred_img = model_mean + (0.5 * model_log_variance).exp() * noise
         return pred_img, x_start
 
@@ -754,7 +757,9 @@ class GaussianDiffusion(Module):
             sigma = eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
             c = (1 - alpha_next - sigma ** 2).sqrt()
 
-            noise = torch.randn_like(img)
+            # for inverse problems noise should not be added during sampling
+            #noise = torch.randn_like(img)
+            noise = 0.
 
             img = x_start * alpha_next.sqrt() + \
                   c * pred_noise + \
