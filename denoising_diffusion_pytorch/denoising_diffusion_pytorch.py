@@ -302,8 +302,12 @@ class Unet(Module):
         self.channels = channels
         self.self_condition = self_condition
         self.image_condition = image_condition
-        input_channels = channels * (2 if self_condition != image_condition else 1) # xor
-        input_channels = channels * (3 if self_condition and image_condition else 1)
+        if self_condition and image_condition:
+            input_channels = channels * 3
+        elif self_condition or image_condition:
+            input_channels = channels * 2
+        else:
+            input_channels = channels
 
         init_dim = default(init_dim, dim)
         self.init_conv = nn.Conv2d(input_channels, init_dim, 7, padding = 3)
