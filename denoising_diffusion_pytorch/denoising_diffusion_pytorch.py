@@ -758,6 +758,7 @@ class GaussianDiffusion(Module):
             alpha = self.alphas_cumprod[time]
             alpha_next = self.alphas_cumprod[time_next]
 
+            # n
             sigma = eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
             c = (1 - alpha_next - sigma ** 2).sqrt()
 
@@ -850,7 +851,7 @@ class GaussianDiffusion(Module):
         x_self_cond = None
         if self.self_condition and random() < 0.5:
             with torch.no_grad():
-                x_self_cond = self.model_predictions(x, t).pred_x_start
+                x_self_cond = self.model_predictions(x, t, x_cond=x_cond).pred_x_start
                 x_self_cond.detach_()
 
         # predict and take gradient step
