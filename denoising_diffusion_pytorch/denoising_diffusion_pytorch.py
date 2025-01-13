@@ -848,10 +848,8 @@ class GaussianDiffusion(Module):
         # this technique will slow down training by 25%, but seems to lower FID significantly
 
         x_self_cond = None
-        if self.self_condition and random() < 0.5:
+        if self.self_condition:# and random() < 0.5:
             with torch.no_grad():
-                # preliminary results show that using the conditional info to
-                # predict the self-conditioning info leads to worse performance
                 x_self_cond = self.model_predictions(x, t, x_cond=x_cond).pred_x_start
                 x_self_cond.detach_()
 
