@@ -852,7 +852,7 @@ class GaussianDiffusion(Module):
             with torch.no_grad():
                 # preliminary results show that using the conditional info to
                 # predict the self-conditioning info leads to worse performance
-                x_self_cond = self.model_predictions(x, t, x_cond=None).pred_x_start
+                x_self_cond = self.model_predictions(x, t, x_cond=x_cond).pred_x_start
                 x_self_cond.detach_()
 
         # predict and take gradient step
