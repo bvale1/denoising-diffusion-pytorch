@@ -746,7 +746,7 @@ class GaussianDiffusion(Module):
             time_cond = torch.full((batch,), time, device = device, dtype = torch.long)
             self_cond = x_start if self.self_condition else None
             pred_noise, x_start, *_ = self.model_predictions(
-                img, time_cond, self_cond, x_cond, clip_x_start = True, rederive_pred_noise = True
+                img, time_cond, self_cond, x_cond, clip_x_start = False, rederive_pred_noise = True
             )
 
             if time_next < 0:
