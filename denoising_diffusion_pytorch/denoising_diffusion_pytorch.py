@@ -283,6 +283,7 @@ class Unet(Module):
         channels : int = 3,
         self_condition : bool = False,
         image_condition : bool = False, # condition on image
+        image_condition_channels : int = 3, # number of channels in image condition may differ
         learned_variance : bool = False,
         learned_sinusoidal_cond : bool = False,
         random_fourier_features : bool = False,
@@ -302,10 +303,13 @@ class Unet(Module):
         self.channels = channels
         self.self_condition = self_condition
         self.image_condition = image_condition
+        self.image_condition_channels = image_condition_channels
         if self_condition and image_condition:
-            input_channels = channels * 3
-        elif self_condition or image_condition:
+            input_channels = channels * 2 + image_condition_channels
+        elif self_condition:
             input_channels = channels * 2
+        elif image_condition:
+            input_channels = channels + image_condition_channels
         else:
             input_channels = channels
 
