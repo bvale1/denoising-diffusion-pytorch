@@ -873,7 +873,7 @@ class GaussianDiffusion(Module):
 
         loss = F.mse_loss(model_out, target, reduction = 'none')
         #loss = reduce(loss, 'b ... -> b', 'mean')
-        loss = reduce(loss, 'b, c ... -> b, c', 'mean')
+        loss = reduce(loss, 'b c ... -> b c', 'mean')
         loss = loss * extract(self.loss_weight, t, loss.shape)
         #return loss.mean() 
         return loss # modified to return loss per image and channel for logging, so change back to return loss.mean() to work with the trainer provided in this file
