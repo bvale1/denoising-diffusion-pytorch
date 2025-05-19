@@ -290,6 +290,7 @@ class Unet(Module):
         learned_sinusoidal_dim : int = 16,
         sinusoidal_pos_emb_theta : int = 10000,
         dropout : float = 0.,
+        use_attn : bool = True, # if false remove attention 
         attn_dim_head : int = 32,
         attn_heads : int = 4,
         full_attn : bool = None,    # defaults to full attention only for inner most layer
@@ -370,7 +371,7 @@ class Unet(Module):
             self.downs.append(ModuleList([
                 resnet_block(dim_in, dim_in),
                 resnet_block(dim_in, dim_in),
-                attn_klass(dim_in, dim_head = layer_attn_dim_head, heads = layer_attn_heads),
+                attn_klass(dim_in, dim_head = layer_attn_dim_head, heads = layer_attn_heads) if use_attn else nn.Identity(),
                 Downsample(dim_in, dim_out) if not is_last else nn.Conv2d(dim_in, dim_out, 3, padding = 1)
             ]))
 
@@ -387,7 +388,7 @@ class Unet(Module):
             self.ups.append(ModuleList([
                 resnet_block(dim_out + dim_in, dim_out),
                 resnet_block(dim_out + dim_in, dim_out),
-                attn_klass(dim_out, dim_head = layer_attn_dim_head, heads = layer_attn_heads),
+                attn_klass(dim_out, dim_head = layer_attn_dim_head, heads = layer_attn_heads) if use_attn else nn.Identity(),
                 Upsample(dim_out, dim_in) if not is_last else  nn.Conv2d(dim_out, dim_in, 3, padding = 1)
             ]))
 
