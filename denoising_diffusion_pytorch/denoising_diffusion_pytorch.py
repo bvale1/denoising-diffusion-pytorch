@@ -416,7 +416,7 @@ class Unet(Module):
         if self.image_condition:
             x_cond = default(
                 x_cond, lambda: torch.zeros(
-                        (x.shape[0], self.channels, x.shape[2], x.shape[3]),
+                        (x.shape[0], self.image_condition_channels, x.shape[2], x.shape[3]),
                         device = x.device, dtype = x.dtype
                     )
                 )
@@ -503,25 +503,23 @@ def sigmoid_beta_schedule(timesteps, start = -3, end = 3, tau = 1, clamp_min = 1
 
 class GaussianDiffusion(Module):
     def __init__(
-        self,
-        model,
-        *,
-        image_size,
-        timesteps = 1000,
-        sampling_timesteps = None,
-        objective = 'pred_v',
-        beta_schedule = 'sigmoid',
-        schedule_fn_kwargs = dict(),
-        ddim_sampling_eta = 0.,
-        auto_normalize = True,
-        offset_noise_strength = 0.,  # https://www.crosslabs.org/blog/diffusion-with-offset-noise
-        min_snr_loss_weight = False, # https://arxiv.org/abs/2303.09556
-        min_snr_gamma = 5,
-        immiscible = False
-    ):
+            self,
+            model,
+            *,
+            image_size,
+            timesteps = 1000,
+            sampling_timesteps = None,
+            objective = 'pred_v',
+            beta_schedule = 'sigmoid',
+            schedule_fn_kwargs = dict(),
+            ddim_sampling_eta = 0.,
+            auto_normalize = True,
+            offset_noise_strength = 0.,  # https://www.crosslabs.org/blog/diffusion-with-offset-noise
+            min_snr_loss_weight = False, # https://arxiv.org/abs/2303.09556
+            min_snr_gamma = 5,
+            immiscible = False
+        ):
         super().__init__()
-        assert not (type(self) == GaussianDiffusion and model.channels != model.out_dim)
-        assert not hasattr(model, 'random_or_learned_sinusoidal_cond') or not model.random_or_learned_sinusoidal_cond
 
         self.model = model
 
