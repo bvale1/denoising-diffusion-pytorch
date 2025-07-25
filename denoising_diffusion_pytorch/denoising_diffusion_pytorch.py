@@ -526,6 +526,7 @@ class GaussianDiffusion(Module):
         self.channels = self.model.channels
         self.self_condition = self.model.self_condition
         self.image_condition = self.model.image_condition
+        self.wavelength_condition = True if 'wavelength_condition' in vars(self.model).keys() else False
 
         if isinstance(image_size, int):
             image_size = (image_size, image_size)
@@ -660,9 +661,12 @@ class GaussianDiffusion(Module):
         posterior_log_variance_clipped = extract(self.posterior_log_variance_clipped, t, x_t.shape)
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
-    def model_predictions(self, x, t, x_self_cond = None, x_cond = None,
+    def model_predictions(self, x, t, x_self_cond = None, x_cond = None, wavelength_cond = None,
                           clip_x_start = False, rederive_pred_noise = False):
-        model_output = self.model(x, t, x_self_cond=x_self_cond, x_cond=x_cond)
+        if self.wavelength_condition:
+            model_output = self.model(x, t, x_self_cond=x_self_cond, x_cond=x_cond, wavelength_cond=wavelength_cond)
+        else:
+            model_output = self.model(x, t, x_self_cond=x_self_cond, x_cond=x_cond)
         maybe_clip = partial(torch.clamp, min = -1., max = 1.) if clip_x_start else identity
 
         if self.objective == 'pred_noise':
@@ -686,8 +690,10 @@ class GaussianDiffusion(Module):
 
         return ModelPrediction(pred_noise, x_start)
 
-    def p_mean_variance(self, x, t, x_self_cond = None, x_cond = None, clip_denoised = True):
-        preds = self.model_predictions(x, t, x_self_cond=x_self_cond, x_cond=x_cond)
+    def p_mean_variance(self, x, t, x_self_cond = None, x_cond = None, wavelength_cond = None, clip_denoised = False):
+        preds = self.model_predictions(
+            x, t, x_self_cond=x_self_cond, x_cond=x_cond, wavelength_cond=wavelength_cond
+        )
         x_start = preds.pred_x_start
 
         if clip_denoised:
@@ -699,11 +705,16 @@ class GaussianDiffusion(Module):
         return model_mean, posterior_variance, posterior_log_variance, x_start
 
     @torch.inference_mode()
-    def p_sample(self, x, t: int, x_self_cond = None, x_cond = None):
+    def p_sample(self, x, t: int, x_self_cond = None, x_cond = None, wavelength_cond = None):
         b, *_, device = *x.shape, self.device
         batched_times = torch.full((b,), t, device = device, dtype = torch.long)
         model_mean, _, model_log_variance, x_start = self.p_mean_variance(
-            x = x, t = batched_times, x_self_cond = x_self_cond, x_cond = x_cond, clip_denoised = True
+            x = x,
+            t = batched_times, 
+            x_self_cond = x_self_cond,
+            x_cond = x_cond, 
+            wavelength_cond = wavelength_cond,
+            clip_denoised = False
         )
         # for inverse problems noise should not be added during sampling
         #noise = torch.randn_like(x) if t > 0 else 0. # no noise if t == 0
@@ -713,7 +724,7 @@ class GaussianDiffusion(Module):
         return pred_img, x_start
 
     @torch.inference_mode()
-    def p_sample_loop(self, shape, x_cond = None, return_all_timesteps = False):
+    def p_sample_loop(self, shape, x_cond = None, wavelength_cond = None, return_all_timesteps = False):
         device = self.device
 
         img = torch.randn(shape, device = device)
@@ -723,7 +734,7 @@ class GaussianDiffusion(Module):
 
         for t in reversed(range(self.num_timesteps)):
             self_cond = x_start if self.self_condition else None
-            img, x_start = self.p_sample(img, t, self_cond, x_cond)
+            img, x_start = self.p_sample(img, t, self_cond, x_cond, wavelength_cond)
             if return_all_timesteps:
                 imgs.append(img)
 
@@ -733,7 +744,7 @@ class GaussianDiffusion(Module):
         return ret
 
     @torch.inference_mode()
-    def ddim_sample(self, shape, x_cond=None, return_all_timesteps = False):
+    def ddim_sample(self, shape, x_cond=None, wavelength_cond = None, return_all_timesteps = False):
         batch, device, total_timesteps, sampling_timesteps, eta, objective = shape[0], self.device, self.num_timesteps, self.sampling_timesteps, self.ddim_sampling_eta, self.objective
 
         times = torch.linspace(-1, total_timesteps - 1, steps = sampling_timesteps + 1)   # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
@@ -749,7 +760,7 @@ class GaussianDiffusion(Module):
             time_cond = torch.full((batch,), time, device = device, dtype = torch.long)
             self_cond = x_start if self.self_condition else None
             pred_noise, x_start, *_ = self.model_predictions(
-                img, time_cond, self_cond, x_cond, clip_x_start = False, rederive_pred_noise = True
+                img, time_cond, self_cond, x_cond, wavelength_cond, clip_x_start = False, rederive_pred_noise = True
             )
 
             if time_next < 0:
@@ -781,12 +792,13 @@ class GaussianDiffusion(Module):
         return ret
 
     @torch.inference_mode()
-    def sample(self, batch_size = 16, x_cond = None, return_all_timesteps = False):
+    def sample(self, batch_size = 16, x_cond = None, wavelength_cond = None, return_all_timesteps = False):
         (h, w), channels = self.image_size, self.channels
         sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
         return sample_fn(
             (batch_size, channels, h, w),
             x_cond=x_cond,
+            wavelength_cond = wavelength_cond,
             return_all_timesteps = return_all_timesteps
         )
 
@@ -830,7 +842,7 @@ class GaussianDiffusion(Module):
         )
 
     def p_losses(self, x_start, t, noise = None, offset_noise_strength = None,
-                 x_cond = None):
+                 x_cond = None, wavelength_cond = None):
         b, c, h, w = x_start.shape
         noise = default(noise, lambda: torch.randn_like(x_start))
 
@@ -853,12 +865,16 @@ class GaussianDiffusion(Module):
         x_self_cond = None
         if self.self_condition and random() < 0.5:
             with torch.no_grad():
-                x_self_cond = self.model_predictions(x, t, x_cond=x_cond).pred_x_start
+                x_self_cond = self.model_predictions(
+                    x, t, x_cond=x_cond, wavelength_cond=wavelength_cond
+                ).pred_x_start
                 x_self_cond.detach_()
 
         # predict and take gradient step
-
-        model_out = self.model(x, t, x_self_cond, x_cond)
+        if self.wavelength_condition:
+            model_out = self.model(x, t, x_self_cond, x_cond, wavelength_cond)
+        else:
+            model_out = self.model(x, t, x_self_cond, x_cond)
 
         if self.objective == 'pred_noise':
             target = noise
