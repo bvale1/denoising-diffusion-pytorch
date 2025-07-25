@@ -290,6 +290,7 @@ class Unet(Module):
         learned_sinusoidal_dim : int = 16,
         sinusoidal_pos_emb_theta : int = 10000,
         dropout : float = 0.,
+        use_attn : bool = True, # if false remove attention 
         attn_dim_head : int = 32,
         attn_heads : int = 4,
         full_attn : bool = None,    # defaults to full attention only for inner most layer
@@ -370,7 +371,7 @@ class Unet(Module):
             self.downs.append(ModuleList([
                 resnet_block(dim_in, dim_in),
                 resnet_block(dim_in, dim_in),
-                attn_klass(dim_in, dim_head = layer_attn_dim_head, heads = layer_attn_heads),
+                attn_klass(dim_in, dim_head = layer_attn_dim_head, heads = layer_attn_heads) if use_attn else nn.Identity(),
                 Downsample(dim_in, dim_out) if not is_last else nn.Conv2d(dim_in, dim_out, 3, padding = 1)
             ]))
 
@@ -387,7 +388,7 @@ class Unet(Module):
             self.ups.append(ModuleList([
                 resnet_block(dim_out + dim_in, dim_out),
                 resnet_block(dim_out + dim_in, dim_out),
-                attn_klass(dim_out, dim_head = layer_attn_dim_head, heads = layer_attn_heads),
+                attn_klass(dim_out, dim_head = layer_attn_dim_head, heads = layer_attn_heads) if use_attn else nn.Identity(),
                 Upsample(dim_out, dim_in) if not is_last else  nn.Conv2d(dim_out, dim_in, 3, padding = 1)
             ]))
 
@@ -415,7 +416,7 @@ class Unet(Module):
         if self.image_condition:
             x_cond = default(
                 x_cond, lambda: torch.zeros(
-                        (x.shape[0], self.channels, x.shape[2], x.shape[3]),
+                        (x.shape[0], self.image_condition_channels, x.shape[2], x.shape[3]),
                         device = x.device, dtype = x.dtype
                     )
                 )
@@ -502,25 +503,23 @@ def sigmoid_beta_schedule(timesteps, start = -3, end = 3, tau = 1, clamp_min = 1
 
 class GaussianDiffusion(Module):
     def __init__(
-        self,
-        model,
-        *,
-        image_size,
-        timesteps = 1000,
-        sampling_timesteps = None,
-        objective = 'pred_v',
-        beta_schedule = 'sigmoid',
-        schedule_fn_kwargs = dict(),
-        ddim_sampling_eta = 0.,
-        auto_normalize = True,
-        offset_noise_strength = 0.,  # https://www.crosslabs.org/blog/diffusion-with-offset-noise
-        min_snr_loss_weight = False, # https://arxiv.org/abs/2303.09556
-        min_snr_gamma = 5,
-        immiscible = False
-    ):
+            self,
+            model,
+            *,
+            image_size,
+            timesteps = 1000,
+            sampling_timesteps = None,
+            objective = 'pred_v',
+            beta_schedule = 'sigmoid',
+            schedule_fn_kwargs = dict(),
+            ddim_sampling_eta = 0.,
+            auto_normalize = True,
+            offset_noise_strength = 0.,  # https://www.crosslabs.org/blog/diffusion-with-offset-noise
+            min_snr_loss_weight = False, # https://arxiv.org/abs/2303.09556
+            min_snr_gamma = 5,
+            immiscible = False
+        ):
         super().__init__()
-        #assert not (type(self) == GaussianDiffusion and model.channels != model.out_dim)
-        assert not hasattr(model, 'random_or_learned_sinusoidal_cond') or not model.random_or_learned_sinusoidal_cond
 
         self.model = model
 
