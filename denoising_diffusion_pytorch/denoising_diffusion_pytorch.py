@@ -775,8 +775,7 @@ class GaussianDiffusion(Module):
             sigma = eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
             c = (1 - alpha_next - sigma ** 2).sqrt()
 
-            # for inverse problems noise should not be added during sampling
-            #noise = torch.randn_like(img)
+            noise = torch.randn_like(img)
             noise = 0.
 
             img = x_start * alpha_next.sqrt() + \
@@ -792,7 +791,8 @@ class GaussianDiffusion(Module):
         return ret
 
     @torch.inference_mode()
-    def sample(self, batch_size = 16, x_cond = None, wavelength_cond = None, return_all_timesteps = False):
+    def sample(self, batch_size = 16, x_cond = None, 
+               wavelength_cond = None, return_all_timesteps = False):
         (h, w), channels = self.image_size, self.channels
         sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
         return sample_fn(
